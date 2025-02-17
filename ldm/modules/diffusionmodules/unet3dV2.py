@@ -479,13 +479,16 @@ class Unet3D(nn.Module):
         assert not (self.has_cond and not exists(cond)
                     ), 'cond must be passed in if cond_dim specified'
         batch, device = x.shape[0], x.device
-        pdb.set_trace()
+        #pdb.set_trace()
         focus_present_mask = default(focus_present_mask, lambda: prob_mask_like(
             (batch,), prob_focus_present, device=device))
 
         time_rel_pos_bias = self.time_rel_pos_bias(x.shape[2], device=x.device)
 
-        x = torch.cat([x, self_cond], dim=1) if self_cond is not None else x
+        x = torch.cat([x , cond[0]] , dim=1)
+        #pdb.set_trace()
+
+        #x = torch.cat([x, self_cond], dim=1) if self_cond is not None else x
         x = self.init_conv(x)
         r = x.clone()
 

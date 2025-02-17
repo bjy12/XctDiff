@@ -25,7 +25,9 @@ from ldm.modules.ema import LitEma
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
+import pdb
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -204,7 +206,6 @@ class DDPM(pl.LightningModule):
                 self.model_ema.restore(self.model.parameters())
                 if context is not None:
                     print(f"{context}: Restored training weights")
-
     @torch.no_grad()
     def init_from_ckpt(self, path, ignore_keys=list(), only_model=False):
         sd = torch.load(path, map_location="cpu")
@@ -460,6 +461,11 @@ class DDPM(pl.LightningModule):
                      prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log_dict(loss_dict_no_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
         self.log_dict(loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
+        if batch_idx == 0 :
+            #pdb.set_trace()
+            log_dict = self.log_images(batch, sample=True , ddim_steps=100 , ddim_eta=0. , return_keys=True)
+
+
 
     def on_train_batch_end(self, *args, **kwargs):
         if self.use_ema:
@@ -762,6 +768,20 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError
 
         return fold, unfold, normalization, weighting
+    @torch.no_grad()
+    def get_cond_input(self, batch):
+        #pdb.set_trace()
+        c_proj , c_proj_points , c_coords= batch['xray'] , batch['proj_points'] , batch['coords']
+        c_proj = c_proj.to(memory_format=torch.contiguous_format).float()
+        c_proj_points = c_proj_points.to(memory_format=torch.contiguous_format).float()
+        c_coords = c_coords.to(memory_format=torch.contiguous_format).float()
+
+        xc = {
+            'proj': c_proj,
+            'proj_points': c_proj_points,
+            'coord': c_coords
+        }
+        return xc
 
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
@@ -772,7 +792,7 @@ class LatentDiffusion(DDPM):
         x = x.to(self.device)
         encoder_posterior = self.encode_first_stage(x)
         z = self.get_first_stage_encoding(encoder_posterior).detach()
-
+        
         if self.model.conditioning_key is not None and not self.force_null_conditioning:
             if cond_key is None:
                 cond_key = self.cond_stage_key
@@ -783,12 +803,15 @@ class LatentDiffusion(DDPM):
                 elif cond_key in ['class_label', 'cls']:
                     xc = batch
                 else:
-                    xc = super().get_input(batch, cond_key).to(self.device)
+                    #xc = super().get_input(batch, cond_key).to(self.device)
+                    #pdb.set_trace()
+                    xc = self.get_cond_input(batch)
             else:
                 xc = x
-
+            #pdb.set_trace()
             if not self.cond_stage_trainable or force_c_encode:
                 if isinstance(xc, dict) or isinstance(xc, list):
+                    
                     c = self.get_learned_conditioning(xc)
                 else:
                     c = self.get_learned_conditioning(xc.to(self.device))
@@ -808,6 +831,7 @@ class LatentDiffusion(DDPM):
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
                 c = {'pos_x': pos_x, 'pos_y': pos_y}
+        #pdb.set_trace()
         out = [z, c]
         if return_first_stage_outputs:
             xrec = self.decode_first_stage(z)
@@ -816,6 +840,7 @@ class LatentDiffusion(DDPM):
             out.extend([x])
         if return_original_cond:
             out.append(xc)
+        #pdb.set_trace()
         return out
 
     @torch.no_grad()
@@ -847,18 +872,26 @@ class LatentDiffusion(DDPM):
             if self.shorten_cond_schedule:  # TODO: drop this option
                 tc = self.cond_ids[t].to(self.device)
                 c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
+        #pdb.set_trace()
         return self.p_losses(x, c, t, *args, **kwargs)
 
     def apply_model(self, x_noisy, t, cond, return_ids=False):
+        #pdb.set_trace()
         if isinstance(cond, dict):
             # hybrid case, cond is expected to be a dict
             pass
         else:
             if not isinstance(cond, list):
                 cond = [cond]
-            key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
+            if self.model.conditioning_key == 'concat':
+                key = 'c_concat'
+            elif self.model.conditioning_key == 'crossattn':
+                key = 'c_crossattn'
+            elif self.model.conditioning_key == 'split':
+                key = 'split'
+            #key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
-
+        #pdb.set_trace()
         x_recon = self.model(x_noisy, t, **cond)
 
         if isinstance(x_recon, tuple) and not return_ids:
@@ -886,6 +919,7 @@ class LatentDiffusion(DDPM):
 
     def p_losses(self, x_start, cond, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
+        #pdb.set_trace()
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
 
@@ -1114,9 +1148,10 @@ class LatentDiffusion(DDPM):
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         if ddim:
             ddim_sampler = DDIMSampler(self)
-            shape = (self.channels, self.image_size, self.image_size)
+            shape = (self.channels, self.image_size, self.image_size , self.image_size)
             samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size,
                                                          shape, cond, verbose=False, **kwargs)
+            #pdb.set_trace()
 
         else:
             samples, intermediates = self.sample(cond=cond, batch_size=batch_size,
@@ -1148,135 +1183,328 @@ class LatentDiffusion(DDPM):
         else:
             c = repeat(c, '1 ... -> b ...', b=batch_size).to(self.device)
         return c
-
+    def get_center_slices(self, volume):
+        """获取三个方向的中心切片
+        Args:
+            volume (torch.Tensor): Shape [B, C, D, H, W]
+        Returns:
+            tuple: (axial, sagittal, coronal) 切片
+        """
+        B, C, D, H, W = volume.shape
+        center_d = D // 2
+        center_h = H // 2
+        center_w = W // 2
+        
+        axial = volume[:, :, center_d, :, :]     # [B, C, H, W]
+        sagittal = volume[:, :, :, :, center_w]  # [B, C, D, H]
+        coronal = volume[:, :, :, center_h, :]   # [B, C, D, W]
+        
+        return axial, sagittal, coronal
+    def normalize_volume(self, volume):
+        """将体数据标准化到[0,1]范围"""
+        volume = (volume + 1.0) / 2.0 
+        volume = torch.clip(volume, 0.0, 1.0)
+        return volume   
+    
+    def log_slice_comparison(self, slice_a, slice_rec, direction , mode):
+        """记录单个方向的切片对比和指标"""
+        # 创建对比图
+        comparison = torch.cat([slice_a, slice_rec], dim=-1)
+        
+        # 记录图像
+        self.logger.experiment.add_images(
+            f'val{mode}/reconstruction_{direction}',
+            comparison,
+            self.global_step,
+            dataformats='NCHW'
+        )
+        
+        # 计算并记录PSNR和SSIM
+        psnr, ssim = self.calculate_metrics(slice_a, slice_rec)
+        
+        # 记录指标
+        self.log_metrics_to_tensorboard(psnr, ssim, direction)
+    def tensor_to_numpy(self, tensor):
+        """将tensor转换为numpy数组，并确保值域在[0,1]
+        Args:
+            tensor (torch.Tensor): 输入tensor [B,C,H,W] or [B,C,D,H,W]
+        Returns:
+            np.ndarray: numpy数组
+        """
+        # 确保tensor在CPU上
+        tensor = tensor.detach().cpu()
+        
+        # 如果是batch，只取第一个样本
+        if tensor.dim() == 5:  # 3D volume [B,C,D,H,W]
+            tensor = tensor[0]  # [C,D,H,W]
+        elif tensor.dim() == 4:  # 2D image [B,C,H,W]
+            tensor = tensor[0]  # [C,H,W]
+            
+        # 转换为numpy并调整通道顺序
+        array = tensor.numpy()
+        
+        # 确保值域在[0,1]之间
+        array = np.clip(array, 0, 1)
+        
+        return array
+    def calculate_metrics(self, gt, pred):
+        """计算PSNR和SSIM
+        Args:
+            gt (torch.Tensor): Ground truth tensor
+            pred (torch.Tensor): Predicted tensor
+        Returns:
+            tuple: (psnr, ssim) 指标值
+        """
+        # 转换为numpy数组
+        gt_np = self.tensor_to_numpy(gt)
+        pred_np = self.tensor_to_numpy(pred)
+        
+        # 计算PSNR
+        try:
+            psnr = peak_signal_noise_ratio(
+                gt_np, 
+                pred_np, 
+                data_range=1.0
+            )
+        except Exception as e:
+            print(f"PSNR calculation failed: {e}")
+            psnr = 0.0
+        
+        # 计算SSIM
+        try:
+            # 对于3D数据，我们计算每个切片的SSIM然后取平均
+            if gt_np.ndim == 4:  # [C,D,H,W]
+                ssim_vals = []
+                for d in range(gt_np.shape[1]):  # 遍历深度方向
+                    ssim = structural_similarity(
+                        gt_np[:, d],
+                        pred_np[:, d],
+                        channel_axis=0,
+                        data_range=1.0
+                    )
+                    ssim_vals.append(ssim)
+                ssim = np.mean(ssim_vals)
+            else:  # 2D数据 [C,H,W]
+                ssim = structural_similarity(
+                    gt_np,
+                    pred_np,
+                    channel_axis=0,
+                    data_range=1.0
+                )
+        except Exception as e:
+            print(f"SSIM calculation failed: {e}")
+            ssim = 0.0
+            
+        return psnr, ssim  
+    def log_metrics_to_tensorboard(self, psnr, ssim, direction):
+        """记录PSNR和SSIM到Tensorboard
+        Args:
+            psnr (float): PSNR值
+            ssim (float): SSIM值
+            direction (str): 切片方向
+            suffix (str): 日志后缀
+        """
+        # 记录到tensorboard的scalar部分
+        self.logger.experiment.add_scalar(
+            f'Metrics/PSNR_{direction}',
+            psnr,
+            self.global_step
+        )
+        self.logger.experiment.add_scalar(
+            f'Metrics/SSIM_{direction}',
+            ssim,
+            self.global_step
+        )
+        
+        # 同时也通过log方法记录
+        self.log(f'val/psnr_{direction}', psnr,
+                on_step=False, on_epoch=True, sync_dist=True)
+        self.log(f'val/ssim_{direction}', ssim,
+                on_step=False, on_epoch=True, sync_dist=True)
     @torch.no_grad()
-    def log_images(self, batch, N=8, n_row=4, sample=True, ddim_steps=50, ddim_eta=0., return_keys=None,
-                   quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=True,
-                   plot_diffusion_rows=True, unconditional_guidance_scale=1., unconditional_guidance_label=None,
-                   use_ema_scope=True,
-                   **kwargs):
+    def log_images(self, batch , sample=True , ddim_steps=100 , ddim_eta=0. ,return_keys=True, use_ema_scope=True):
         ema_scope = self.ema_scope if use_ema_scope else nullcontext
         use_ddim = ddim_steps is not None
-
         log = dict()
+        #pdb.set_trace()
         z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
                                            return_first_stage_outputs=True,
                                            force_c_encode=True,
                                            return_original_cond=True,
-                                           bs=N)
-        N = min(x.shape[0], N)
-        n_row = min(x.shape[0], n_row)
-        log["inputs"] = x
-        log["reconstruction"] = xrec
-        if self.model.conditioning_key is not None:
-            if hasattr(self.cond_stage_model, "decode"):
-                xc = self.cond_stage_model.decode(c)
-                log["conditioning"] = xc
-            elif self.cond_stage_key in ["caption", "txt"]:
-                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key], size=x.shape[2] // 25)
-                log["conditioning"] = xc
-            elif self.cond_stage_key in ['class_label', "cls"]:
-                try:
-                    xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"], size=x.shape[2] // 25)
-                    log['conditioning'] = xc
-                except KeyError:
-                    # probably no "human_label" in batch
-                    pass
-            elif isimage(xc):
-                log["conditioning"] = xc
-            if ismap(xc):
-                log["original_conditioning"] = self.to_rgb(xc)
-
-        if plot_diffusion_rows:
-            # get diffusion row
-            diffusion_row = list()
-            z_start = z[:n_row]
-            for t in range(self.num_timesteps):
-                if t % self.log_every_t == 0 or t == self.num_timesteps - 1:
-                    t = repeat(torch.tensor([t]), '1 -> b', b=n_row)
-                    t = t.to(self.device).long()
-                    noise = torch.randn_like(z_start)
-                    z_noisy = self.q_sample(x_start=z_start, t=t, noise=noise)
-                    diffusion_row.append(self.decode_first_stage(z_noisy))
-
-            diffusion_row = torch.stack(diffusion_row)  # n_log_step, n_row, C, H, W
-            diffusion_grid = rearrange(diffusion_row, 'n b c h w -> b n c h w')
-            diffusion_grid = rearrange(diffusion_grid, 'b n c h w -> (b n) c h w')
-            diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
-            log["diffusion_row"] = diffusion_grid
-
+                                           bs=1)
+        #pdb.set_trace()
         if sample:
-            # get denoise row
             with ema_scope("Sampling"):
-                samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+                samples, z_denoise_row = self.sample_log(cond=c, batch_size=1, ddim=use_ddim,
                                                          ddim_steps=ddim_steps, eta=ddim_eta)
                 # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
-            x_samples = self.decode_first_stage(samples)
-            log["samples"] = x_samples
-            if plot_denoise_rows:
-                denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
-                log["denoise_row"] = denoise_grid
+                # pdb.set_trace()
+                x_samples = self.decode_first_stage(samples)
+                x = self.normalize_volume(x)
+                xrec = self.normalize_volume(xrec)
+                x_samples = self.normalize_volume(x_samples)
+                x_slices = self.get_center_slices(x)
+                xrec_slices = self.get_center_slices(xrec)
+                x_samples_slices = self.get_center_slices(x_samples)
+                for direction, (slice_gt, slice_rec,slice_sample) in zip(
+                    ['axial', 'sagittal', 'coronal'],
+                    zip(x_slices, xrec_slices , x_samples_slices)
+                ):
+                    self.log_slice_comparison(slice_gt, slice_sample, direction , mode='gt_sample')
+                    self.log_slice_comparison(slice_rec, slice_sample, direction , mode='rec_sample')
 
-            if quantize_denoised:
-                # also display when quantizing x0 while sampling
-                with ema_scope("Plotting Quantized Denoised"):
-                    samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
-                                                             ddim_steps=ddim_steps, eta=ddim_eta,
-                                                             quantize_denoised=True)
-                    # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True,
-                    #                                      quantize_denoised=True)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_x0_quantized"] = x_samples
+                gt_samples_psnr , gt_samples_ssim =  self.calculate_metrics(x , x_samples)
+                rec_samples_psnr , rec_samples_ssim = self.calculate_metrics(xrec , x_samples)
+                self.log_metrics_to_tensorboard(gt_samples_psnr, gt_samples_ssim, 'gt_sample')
+                self.log_metrics_to_tensorboard(rec_samples_psnr, rec_samples_ssim , 'rec_sample')
 
-        if unconditional_guidance_scale > 1.0:
-            uc = self.get_unconditional_conditioning(N, unconditional_guidance_label)
-            if self.model.conditioning_key == "crossattn-adm":
-                uc = {"c_crossattn": [uc], "c_adm": c["c_adm"]}
-            with ema_scope("Sampling with classifier-free guidance"):
-                samples_cfg, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
-                                                 ddim_steps=ddim_steps, eta=ddim_eta,
-                                                 unconditional_guidance_scale=unconditional_guidance_scale,
-                                                 unconditional_conditioning=uc,
-                                                 )
-                x_samples_cfg = self.decode_first_stage(samples_cfg)
-                log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
 
-        if inpaint:
-            # make a simple center square
-            b, h, w = z.shape[0], z.shape[2], z.shape[3]
-            mask = torch.ones(N, h, w).to(self.device)
-            # zeros will be filled in
-            mask[:, h // 4:3 * h // 4, w // 4:3 * w // 4] = 0.
-            mask = mask[:, None, ...]
-            with ema_scope("Plotting Inpaint"):
-                samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim, eta=ddim_eta,
-                                             ddim_steps=ddim_steps, x0=z[:N], mask=mask)
-            x_samples = self.decode_first_stage(samples.to(self.device))
-            log["samples_inpainting"] = x_samples
-            log["mask"] = mask
 
-            # outpaint
-            mask = 1. - mask
-            with ema_scope("Plotting Outpaint"):
-                samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim, eta=ddim_eta,
-                                             ddim_steps=ddim_steps, x0=z[:N], mask=mask)
-            x_samples = self.decode_first_stage(samples.to(self.device))
-            log["samples_outpainting"] = x_samples
 
-        if plot_progressive_rows:
-            with ema_scope("Plotting Progressives"):
-                img, progressives = self.progressive_denoising(c,
-                                                               shape=(self.channels, self.image_size, self.image_size),
-                                                               batch_size=N)
-            prog_row = self._get_denoise_row_from_list(progressives, desc="Progressive Generation")
-            log["progressive_row"] = prog_row
 
         if return_keys:
             if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
                 return log
             else:
                 return {key: log[key] for key in return_keys}
+        pdb.set_trace()
         return log
+
+
+    # @torch.no_grad()
+    # def log_images(self, batch, N=8, n_row=4, sample=True, ddim_steps=50, ddim_eta=0., return_keys=None,
+    #                quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=True,
+    #                plot_diffusion_rows=True, unconditional_guidance_scale=1., unconditional_guidance_label=None,
+    #                use_ema_scope=True,
+    #                **kwargs):
+    #     ema_scope = self.ema_scope if use_ema_scope else nullcontext
+    #     use_ddim = ddim_steps is not None
+
+    #     log = dict()
+    #     # z from first stage encoder
+    #     # c is condition 
+    #     # x  
+    #     # 处理输入
+    #     z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
+    #                                        return_first_stage_outputs=True,
+    #                                        force_c_encode=True,
+    #                                        return_original_cond=True,
+    #                                        bs=N)
+    #     N = min(x.shape[0], N)
+    #     n_row = min(x.shape[0], n_row)
+    #     log["inputs"] = x
+    #     log["reconstruction"] = xrec
+    #     # 处理condition
+
+    #     if self.model.conditioning_key is not None:
+    #         if hasattr(self.cond_stage_model, "decode"):
+    #             xc = self.cond_stage_model.decode(c)
+    #             log["conditioning"] = xc
+    #         elif self.cond_stage_key in ["caption", "txt"]:
+    #             xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key], size=x.shape[2] // 25)
+    #             log["conditioning"] = xc
+    #         elif self.cond_stage_key in ['class_label', "cls"]:
+    #             try:
+    #                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"], size=x.shape[2] // 25)
+    #                 log['conditioning'] = xc
+    #             except KeyError:
+    #                 # probably no "human_label" in batch
+    #                 pass
+    #         elif isimage(xc):
+    #             log["conditioning"] = xc
+    #         if ismap(xc):
+    #             log["original_conditioning"] = self.to_rgb(xc)
+
+    #     if plot_diffusion_rows:
+    #         # get diffusion row
+    #         diffusion_row = list()
+    #         z_start = z[:n_row]
+    #         for t in range(self.num_timesteps):
+    #             if t % self.log_every_t == 0 or t == self.num_timesteps - 1:
+    #                 t = repeat(torch.tensor([t]), '1 -> b', b=n_row)
+    #                 t = t.to(self.device).long()
+    #                 noise = torch.randn_like(z_start)
+    #                 z_noisy = self.q_sample(x_start=z_start, t=t, noise=noise)
+    #                 diffusion_row.append(self.decode_first_stage(z_noisy))
+
+    #         diffusion_row = torch.stack(diffusion_row)  # n_log_step, n_row, C, H, W
+    #         diffusion_grid = rearrange(diffusion_row, 'n b c h w -> b n c h w')
+    #         diffusion_grid = rearrange(diffusion_grid, 'b n c h w -> (b n) c h w')
+    #         diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
+    #         log["diffusion_row"] = diffusion_grid
+
+    #     if sample:
+    #         # get denoise row
+    #         with ema_scope("Sampling"):
+    #             samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+    #                                                      ddim_steps=ddim_steps, eta=ddim_eta)
+    #             # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
+    #         x_samples = self.decode_first_stage(samples)
+    #         log["samples"] = x_samples
+    #         if plot_denoise_rows:
+    #             denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
+    #             log["denoise_row"] = denoise_grid
+
+    #         if quantize_denoised:
+    #             # also display when quantizing x0 while sampling
+    #             with ema_scope("Plotting Quantized Denoised"):
+    #                 samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+    #                                                          ddim_steps=ddim_steps, eta=ddim_eta,
+    #                                                          quantize_denoised=True)
+    #                 # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True,
+    #                 #                                      quantize_denoised=True)
+    #             x_samples = self.decode_first_stage(samples.to(self.device))
+    #             log["samples_x0_quantized"] = x_samples
+
+    #     if unconditional_guidance_scale > 1.0:
+    #         uc = self.get_unconditional_conditioning(N, unconditional_guidance_label)
+    #         if self.model.conditioning_key == "crossattn-adm":
+    #             uc = {"c_crossattn": [uc], "c_adm": c["c_adm"]}
+    #         with ema_scope("Sampling with classifier-free guidance"):
+    #             samples_cfg, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+    #                                              ddim_steps=ddim_steps, eta=ddim_eta,
+    #                                              unconditional_guidance_scale=unconditional_guidance_scale,
+    #                                              unconditional_conditioning=uc,
+    #                                              )
+    #             x_samples_cfg = self.decode_first_stage(samples_cfg)
+    #             log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
+
+    #     if inpaint:
+    #         # make a simple center square
+    #         b, h, w = z.shape[0], z.shape[2], z.shape[3]
+    #         mask = torch.ones(N, h, w).to(self.device)
+    #         # zeros will be filled in
+    #         mask[:, h // 4:3 * h // 4, w // 4:3 * w // 4] = 0.
+    #         mask = mask[:, None, ...]
+    #         with ema_scope("Plotting Inpaint"):
+    #             samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim, eta=ddim_eta,
+    #                                          ddim_steps=ddim_steps, x0=z[:N], mask=mask)
+    #         x_samples = self.decode_first_stage(samples.to(self.device))
+    #         log["samples_inpainting"] = x_samples
+    #         log["mask"] = mask
+
+    #         # outpaint
+    #         mask = 1. - mask
+    #         with ema_scope("Plotting Outpaint"):
+    #             samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim, eta=ddim_eta,
+    #                                          ddim_steps=ddim_steps, x0=z[:N], mask=mask)
+    #         x_samples = self.decode_first_stage(samples.to(self.device))
+    #         log["samples_outpainting"] = x_samples
+
+    #     if plot_progressive_rows:
+    #         with ema_scope("Plotting Progressives"):
+    #             img, progressives = self.progressive_denoising(c,
+    #                                                            shape=(self.channels, self.image_size, self.image_size),
+    #                                                            batch_size=N)
+    #         prog_row = self._get_denoise_row_from_list(progressives, desc="Progressive Generation")
+    #         log["progressive_row"] = prog_row
+
+    #     if return_keys:
+    #         if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
+    #             return log
+    #         else:
+    #             return {key: log[key] for key in return_keys}
+    #     return log
 
     def configure_optimizers(self):
         lr = self.learning_rate
@@ -1318,12 +1546,21 @@ class DiffusionWrapper(pl.LightningModule):
         self.sequential_cross_attn = diff_model_config.pop("sequential_crossattn", False)
         self.diffusion_model = instantiate_from_config(diff_model_config)
         self.conditioning_key = conditioning_key
-        assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm', 'hybrid-adm', 'crossattn-adm']
+        #pdb.set_trace()
+        assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm', 'hybrid-adm', 'crossattn-adm', 'split']
 
-    def forward(self, x, t, c_concat: list = None, c_crossattn: list = None, c_adm=None):
+
+    def forward(self, x, t, split: list = None,c_concat: list = None, c_crossattn: list = None, c_adm=None):
+        #pdb.set_trace()
+        
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
+        elif self.conditioning_key == 'split':
+            #pdb.set_trace()
+            out = self.diffusion_model(x, t, cond=split)
+            
         elif self.conditioning_key == 'concat':
+            #pdb.set_trace() 
             xc = torch.cat([x] + c_concat, dim=1)
             out = self.diffusion_model(xc, t)
         elif self.conditioning_key == 'crossattn':

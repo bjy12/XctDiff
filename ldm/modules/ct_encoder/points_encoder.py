@@ -8,7 +8,7 @@ from ldm.util import instantiate_from_config
 from ldm.modules.ema import LitEma
 from ldm.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from ldm.modules.diffusionmodules.model import Encoder, Decoder
-
+from ldm.modules.ct_encoder.image_points_cluster import Quant_Context_Cluster
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import pdb
 class VQModel(pl.LightningModule):
@@ -39,6 +39,9 @@ class VQModel(pl.LightningModule):
                                         remap=remap,
                                         sane_index_shape=sane_index_shape)
         self.quant_conv = torch.nn.Conv3d(ddconfig["z_channels"], embed_dim, 1)
+        
+        self.quant_cluster = Quant_Context_Cluster(quant_size=ddconfig['ch'] ,quant_channels=embed_dim,  )
+        
         self.post_quant_conv = torch.nn.Conv3d(embed_dim, ddconfig["z_channels"], 1)
         if colorize_nlabels is not None:
             assert type(colorize_nlabels)==int
@@ -91,10 +94,13 @@ class VQModel(pl.LightningModule):
             self.model_ema(self)
 
     def encode(self, x):
-        pdb.set_trace()
+        #pdb.set_trace()
         h = self.encoder(x)
-        pdb.set_trace()
+        #pdb.set_trace()
         h = self.quant_conv(h)
+        h = self.quant_cluster(h)
+
+        #pdb.set_trace()
         quant, emb_loss, info = self.quantize(h)
         return quant, emb_loss, info
 
@@ -166,7 +172,7 @@ class VQModel(pl.LightningModule):
         x_norm = self.normalize_volume(x)
         xrec_norm = self.normalize_volume(xrec)
         
-        pdb.set_trace()
+        # pdb.set_trace()
         # create random idx
         if batch_idx == 0:
             x_slices = self.get_center_slices(x_norm)
@@ -394,6 +400,7 @@ class VQModelInterface(VQModel):
     def encode(self, x):
         h = self.encoder(x)
         h = self.quant_conv(h)
+        h = self.quant_cluster(h)
         return h
 
     def decode(self, h, force_not_quantize=False):

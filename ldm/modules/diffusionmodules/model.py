@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+import pdb
 def nonlinearity(x):
     return x*torch.sigmoid(x)
 
@@ -203,6 +203,7 @@ class Encoder(nn.Module):
             self.conv_out = torch.nn.Conv3d(block_in, z_channels, 3, 1, 1)
 
     def forward(self, x):
+        #pdb.set_trace()
         hs = [self.init_conv(x)]
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_blocks):
@@ -212,7 +213,7 @@ class Encoder(nn.Module):
                 hs.append(h)
             if i_level != self.num_resolutions - 1:
                 hs.append(self.down[i_level].downsample(hs[-1]))
-
+        #pdb.set_trace()
         # end
         h = hs[-1]
         h = self.norm(h)

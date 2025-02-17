@@ -1,0 +1,91 @@
+model:
+  base_learning_rate: 1e-4
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.0125
+    log_every_t: 200
+    timesteps: 1000
+    loss_type: l1
+    first_stage_key: "image"
+    cond_stage_key: "xray"
+    image_size: 32
+    conditioning_key: "split"
+    channels: 8
+    concat_mode: true
+    cond_stage_trainable: true
+    scale_factor: 0.8
+    monitor: 'val/loss_simple_ema'
+    ckpt_path: "F:/Code_Space/x2ct_ldm/logs/stage_2_v3/20250216_224947/checkpoints/latest_checkpoint-v2.ckpt"
+    unet_config:
+      target: ldm.modules.diffusionmodules.unet3dV2.Unet3D
+      params:
+        dim: 64
+        channels: 264
+        out_dim: 8
+        has_self_cond: False
+        init_kernel_size: 1
+
+
+    first_stage_config:
+      target: ldm.models.autoencoder.VQModelInterface
+      params:
+        ckpt_path: "F:/Code_Space/x2ct_ldm/ckpt/first_stage_ckpt/none_lips/latest_checkpoint-v2.ckpt"
+        n_embed: 8192
+        embed_dim: 8
+        ddconfig:
+          in_channels: 1
+          out_channels: 1
+          ch: 32
+          resolution: 128
+          attn_resolutions: [8]
+          ch_mult: [1,2,4]    # num_down = len(ch_mult)-1
+          num_blocks: 2
+          z_channels: 4
+          block_type: "ResnetBlock"    # ResnetBlock, ConvnetBlock
+          attn_type: "vanilla"    # to be continued
+          dropout: 0.0
+          resamp_with_conv: true
+          num_groups: 8
+        lossconfig:
+          target: torch.nn.Identity
+
+    cond_stage_config:
+      target: ldm.models.xrayconditionV2.XrayCondition
+      params:
+        Xrayencoder_config: 
+          in_channels: 3
+          input_img_size: 256
+          encoder_freeze_layer: "layer1" 
+          feature_layer: "layer2"
+          global_feature_layer: "layer3"
+          global_feature_layer_last: 22
+          pretrained : "imagenet"
+          weight_dir : ''
+          n_classed: 128 
+          bilinear: False
+          model_name: 'resnet101'
+        latent_res: 32
+        combine: 'mlp'
+        implict_fuc_config:
+          pos_dim: 63
+          local_f_dim: 256  
+          num_layer: 3
+          hidden_dim: 512
+          output_dim: 128
+          skips: [1]
+          last_activation: 'relu'
+          use_silu: False
+          no_activation: False
+
+        #ckpt_path: "embedding_32_8.ckpt"
+
+
+data:
+  batch_size: 3
+  root_data: F:/Data_Space/Pelvic1K/processed_128x128_s2.0_block_48
+  train_files_name: ./files_name/train_pelvic_2d_256_2.0_3d_128_2.5.txt
+  test_files_name: ./files_name/test_pelvic_2d_256_2.0_3d_128_2.5.txt
+  num_workers: 1
+  pin_memory: True
+  geo_config: ./geo_config/config_2d_256_s2.0_3d_128_s2.5_low_res.yaml
