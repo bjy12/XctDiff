@@ -183,12 +183,17 @@ class Pelivc_LatentDiffusionDataset(Dataset):
             projs = torch.from_numpy(projs).to(torch.float32)
             proj_points = torch.from_numpy(proj_points).to(torch.float32)
 
+            points = deepcopy(self.low_res_points)
+            points[:, :2] -= 0.5  
+            points[:, 2]  = 0.5 - points[:,2]
+            points *= 2 
+
             ret_dict = {
                 'filename': name,
                 'image': gt_idensity,
                 'xray' : projs,
                 'proj_points': proj_points,
-                'coords': self.low_res_points
+                'coords': points
             }
         return ret_dict
     
