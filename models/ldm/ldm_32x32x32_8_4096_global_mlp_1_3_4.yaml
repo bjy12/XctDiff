@@ -20,16 +20,16 @@ model:
     unet_config:
       target: ldm.modules.diffusionmodules.unet3dV2.Unet3D
       params:
-        dim: 128
-        channels: 136
+        dim: 256
+        channels: 264
         out_dim: 8
         has_self_cond: False
         init_kernel_size: 1
     first_stage_config:
       target: ldm.models.autoencoder.VQModelInterface
       params:
-        ckpt_path: "/root/codespace/xctdiff/ckpts/autoencoder/none_lips/latest_checkpoint-v2.ckpt"
-        n_embed: 8192
+        ckpt_path: "F:/Code_Space/x2ct_ldm/ckpt/first_stage_ckpt/latent_8_4096/latest_checkpoint-v2.ckpt"
+        n_embed: 4096
         embed_dim: 8
         ddconfig:
           in_channels: 1
@@ -64,7 +64,7 @@ model:
           bilinear: False
           model_name: 'resnet101'
         latent_res: 32
-        combine: 'mean'
+        combine: 'mlp'
         implict_fuc_config:
           pos_dim: 63
           local_f_dim: 256  
@@ -80,8 +80,8 @@ model:
 
 
 data:
-  batch_size: 4
-  root_data: /root/share/processed_128x128_s2.0_block_48
+  batch_size: 2
+  root_data: F:/Data_Space/Pelvic1K/processed_128x128_s2.0_block_48
   train_files_name: ./files_name/train_pelvic_2d_256_2.0_3d_128_2.5.txt
   test_files_name: ./files_name/test_pelvic_2d_256_2.0_3d_128_2.5.txt
   num_workers: 1

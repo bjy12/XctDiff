@@ -136,10 +136,10 @@ class XrayCondition(pl.LightningModule):
         condition_feats = points_feats
         #points_feats = points_feats.reshape(b, -1, self.latent_res, self.latent_res , self.latent_res) # B, C , latent_res , latent_res , latent_res 
         #pdb.set_trace()
-        #pos_embed = self.pos_implic(coords)
+        pos_embed = self.pos_implic(coords)
         #pdb.set_trace()
 
-        #condition_feats = self.implict_fn(pos_embed , points_feats , global_feats)
+        condition_feats = self.implict_fn(pos_embed , points_feats , global_feats)
         condition_feats = condition_feats.reshape(b, -1, self.latent_res, self.latent_res , self.latent_res) # B, C , latent_res , latent_res , latent_res 
 
         #pdb.set_trace()
