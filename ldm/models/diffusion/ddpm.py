@@ -136,6 +136,11 @@ class DDPM(pl.LightningModule):
         if self.ucg_training:
             self.ucg_prng = np.random.RandomState()
 
+        self.val_gt_sample_psnr = []
+        self.val_gt_sample_ssim = []
+        self.val_rec_sample_psnr = []
+        self.val_rec_sample_ssim = []
+
     def register_schedule(self, given_betas=None, beta_schedule="linear", timesteps=1000,
                           linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
         if exists(given_betas):
@@ -463,9 +468,34 @@ class DDPM(pl.LightningModule):
         self.log_dict(loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
         if batch_idx == 0 :
             #pdb.set_trace()
-            log_dict = self.log_images(batch, sample=True , ddim_steps=100 , ddim_eta=0. , return_keys=True)
+            log_dict , gt_sample_metrics ,rec_samples_metrics = self.log_images(batch, sample=True , ddim_steps=100 , ddim_eta=0. ,log_vis=True ,return_keys=False)
+        else:
+            log_dict , gt_sample_metrics ,rec_samples_metrics = self.log_images(batch, sample=True , ddim_steps=100 , ddim_eta=0. ,log_vis=False ,return_keys=False)
+        # 收集指标
+        #pdb.set_trace()
+        self.val_gt_sample_psnr.append(gt_sample_metrics[0])
+        self.val_gt_sample_ssim.append(gt_sample_metrics[1])
+        self.val_rec_sample_psnr.append(rec_samples_metrics[0])
+        self.val_rec_sample_ssim.append(rec_samples_metrics[1])
+    
+    def on_validation_epoch_end(self):
+        if len(self.val_gt_sample_psnr) > 0:
+            avg_gt_psnr = torch.tensor(self.val_gt_sample_psnr).mean()
+            avg_gt_ssim = torch.tensor(self.val_gt_sample_ssim).mean()
+            avg_rec_psnr = torch.tensor(self.val_rec_sample_psnr).mean()
+            avg_rec_ssim = torch.tensor(self.val_rec_sample_ssim).mean()
 
+            # 记录到tensorboard
+            self.logger.experiment.add_scalar('val/avg_gt_sample_psnr', avg_gt_psnr, self.current_epoch)
+            self.logger.experiment.add_scalar('val/avg_gt_sample_ssim', avg_gt_ssim, self.current_epoch)
+            self.logger.experiment.add_scalar('val/avg_rec_sample_psnr', avg_rec_psnr, self.current_epoch)
+            self.logger.experiment.add_scalar('val/avg_rec_sample_ssim', avg_rec_ssim, self.current_epoch)
 
+            # 清空列表，为下一个epoch做准备
+            self.val_gt_sample_psnr.clear()
+            self.val_gt_sample_ssim.clear()
+            self.val_rec_sample_psnr.clear()
+            self.val_rec_sample_ssim.clear()        
 
     def on_train_batch_end(self, *args, **kwargs):
         if self.use_ema:
@@ -479,14 +509,14 @@ class DDPM(pl.LightningModule):
         return denoise_grid
 
     @torch.no_grad()
-    def log_images(self, batch, N=8, n_row=2, sample=True, return_keys=None, **kwargs):
+    def log_images(self, batch, N=8, n_row=2, sample=True, return_keys=None,  **kwargs):
         log = dict()
         x = self.get_input(batch, self.first_stage_key)
         N = min(x.shape[0], N)
         n_row = min(x.shape[0], n_row)
         x = x.to(self.device)[:N]
         log["inputs"] = x
-
+        
         # get diffusion row
         diffusion_row = list()
         x_start = x[:n_row]
@@ -514,7 +544,7 @@ class DDPM(pl.LightningModule):
                 return log
             else:
                 return {key: log[key] for key in return_keys}
-        return log
+        return log 
 
     def configure_optimizers(self):
         lr = self.learning_rate
@@ -771,15 +801,17 @@ class LatentDiffusion(DDPM):
     @torch.no_grad()
     def get_cond_input(self, batch):
         #pdb.set_trace()
-        c_proj , c_proj_points , c_coords= batch['xray'] , batch['proj_points'] , batch['coords']
+        c_proj , c_proj_points , c_coords , c_view_feature= batch['xray'] , batch['proj_points'] , batch['coords'] , batch['view_feature']
         c_proj = c_proj.to(memory_format=torch.contiguous_format).float()
         c_proj_points = c_proj_points.to(memory_format=torch.contiguous_format).float()
         c_coords = c_coords.to(memory_format=torch.contiguous_format).float()
+        c_view_feature = c_view_feature.to(memory_format=torch.contiguous_format).float()
 
         xc = {
             'proj': c_proj,
             'proj_points': c_proj_points,
-            'coord': c_coords
+            'coord': c_coords , 
+            'c_view_feature': c_view_feature
         }
         return xc
 
@@ -841,6 +873,7 @@ class LatentDiffusion(DDPM):
         if return_original_cond:
             out.append(xc)
         #pdb.set_trace()
+        # 0 
         return out
 
     @torch.no_grad()
@@ -1221,9 +1254,9 @@ class LatentDiffusion(DDPM):
         
         # 计算并记录PSNR和SSIM
         psnr, ssim = self.calculate_metrics(slice_a, slice_rec)
-        
         # 记录指标
         self.log_metrics_to_tensorboard(psnr, ssim, direction)
+
     def tensor_to_numpy(self, tensor):
         """将tensor转换为numpy数组，并确保值域在[0,1]
         Args:
@@ -1322,7 +1355,7 @@ class LatentDiffusion(DDPM):
         self.log(f'val/ssim_{direction}', ssim,
                 on_step=False, on_epoch=True, sync_dist=True)
     @torch.no_grad()
-    def log_images(self, batch , sample=True , ddim_steps=100 , ddim_eta=0. ,return_keys=True, use_ema_scope=True):
+    def log_images(self, batch , sample=True , ddim_steps=100 , ddim_eta=0. ,return_keys=True, log_vis=False,  use_ema_scope=True):
         ema_scope = self.ema_scope if use_ema_scope else nullcontext
         use_ddim = ddim_steps is not None
         log = dict()
@@ -1333,6 +1366,9 @@ class LatentDiffusion(DDPM):
                                            return_original_cond=True,
                                            bs=1)
         #pdb.set_trace()
+            # 初始化指标列表
+        gt_sample_metrics = None
+        rec_sample_metrics = None
         if sample:
             with ema_scope("Sampling"):
                 samples, z_denoise_row = self.sample_log(cond=c, batch_size=1, ddim=use_ddim,
@@ -1343,32 +1379,32 @@ class LatentDiffusion(DDPM):
                 x = self.normalize_volume(x)
                 xrec = self.normalize_volume(xrec)
                 x_samples = self.normalize_volume(x_samples)
-                x_slices = self.get_center_slices(x)
-                xrec_slices = self.get_center_slices(xrec)
-                x_samples_slices = self.get_center_slices(x_samples)
-                for direction, (slice_gt, slice_rec,slice_sample) in zip(
-                    ['axial', 'sagittal', 'coronal'],
-                    zip(x_slices, xrec_slices , x_samples_slices)
-                ):
-                    self.log_slice_comparison(slice_gt, slice_sample, direction , mode='gt_sample')
-                    self.log_slice_comparison(slice_rec, slice_sample, direction , mode='rec_sample')
-
                 gt_samples_psnr , gt_samples_ssim =  self.calculate_metrics(x , x_samples)
                 rec_samples_psnr , rec_samples_ssim = self.calculate_metrics(xrec , x_samples)
                 self.log_metrics_to_tensorboard(gt_samples_psnr, gt_samples_ssim, 'gt_sample')
                 self.log_metrics_to_tensorboard(rec_samples_psnr, rec_samples_ssim , 'rec_sample')
+                gt_sample_metrics = [gt_samples_psnr , gt_samples_ssim]
+                rec_sample_metrics = [rec_samples_psnr , rec_samples_ssim]
 
 
-
-
-
+                if log_vis:
+                    x_slices = self.get_center_slices(x)
+                    xrec_slices = self.get_center_slices(xrec)
+                    x_samples_slices = self.get_center_slices(x_samples)
+                    for direction, (slice_gt, slice_rec,slice_sample) in zip(
+                        ['axial', 'sagittal', 'coronal'],
+                        zip(x_slices, xrec_slices , x_samples_slices)
+                    ):
+                        self.log_slice_comparison(slice_gt, slice_sample, direction , mode='gt_sample')
+                        self.log_slice_comparison(slice_rec, slice_sample, direction , mode='rec_sample')
+        
         if return_keys:
             if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
                 return log
             else:
                 return {key: log[key] for key in return_keys}
-        pdb.set_trace()
-        return log
+        #pdb.set_trace()
+        return log , gt_sample_metrics ,rec_sample_metrics
 
 
     # @torch.no_grad()

@@ -63,8 +63,8 @@ class XrayCondition(pl.LightningModule):
         self.view_mixer = MLP([2, 2 // 2, 1])
         self.pos_implic , _  = get_embedder(multires=10 , i=0)
 
-        # if self.use_view_feature:
-        #     self.view_aggregator = ViewPoints_Aggregation(**aggregation_config)
+        if self.use_view_feature:
+            self.view_aggregator = ViewPoints_Aggregation(**aggregation_config)
 
 
         
@@ -111,9 +111,7 @@ class XrayCondition(pl.LightningModule):
         projs = x['proj']
         proj_points = x['proj_points']
         coords = x['coord']
-        # if self.use_view_feature:
-        #     view_feature = x['c_view_feature']
-        pdb.set_trace()
+        #pdb.set_trace()
         b , m , c , w , h = projs.shape
         projs = projs.reshape(b * m, c, w, h) # B', C, W, H
 
@@ -143,15 +141,21 @@ class XrayCondition(pl.LightningModule):
             _, c_, w_, h_ = proj_feats[i].shape
             proj_feats[i] = proj_feats[i].reshape(b, m, c_, w_, h_).contiguous() # B, M, C, W, H
         points_feats =  self.forward_points(proj_feats, proj_points)    
-        points_feats = points_feats.permute(0,2,1)
         #pdb.set_trace()
-        
-        condition_feats = points_feats
+        if self.use_view_feature:
+            #pdb.set_trace()
+            view_feature = x['c_view_feature']
+            #pdb.set_trace()
+            agg_points_feature = self.view_aggregator(view_feature , points_feats)
+            condition_feats = agg_points_feature.permute(0,2,1)
+            #pdb.set_trace()
+        #condition_feats = points_feats
         #points_feats = points_feats.reshape(b, -1, self.latent_res, self.latent_res , self.latent_res) # B, C , latent_res , latent_res , latent_res 
         #pdb.set_trace()
-        pos_embed = self.pos_implic(coords)
+        #pos_embed = self.pos_implic(coords)
         #pdb.set_trace()
-        condition_feats = self.implict_fn(pos_embed , points_feats , global_feats)
+        #condition_feats = self.implict_fn(pos_embed , points_feats , global_feats)
+        #pdb.set_trace()
         condition_feats = condition_feats.reshape(b, -1, self.latent_res, self.latent_res , self.latent_res) # B, C , latent_res , latent_res , latent_res 
         #pdb.set_trace()
         return condition_feats
@@ -186,6 +190,9 @@ class XrayCondition(pl.LightningModule):
         elif self.combine == 'mean':
             p_feats = torch.mean(p_feats, dim=-1) # B, C, N
             condition_feats = p_feats    
+        elif self.combine == 'view_agg':
+            p_feats = p_feats.permute(0,3,2,1)
+
         return p_feats
     def encode_to_prequant(self, x):
         h = self.encoder(x)

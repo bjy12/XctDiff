@@ -1,7 +1,7 @@
 import numpy as np
 from copy import deepcopy
 
-
+import pdb
 
 class Geometry(object):
     def __init__(self, config):
@@ -35,7 +35,31 @@ class Geometry(object):
         points = points @ rot_M.T
         
         coeff = (d2) / (d1 - points[:, 0]) # N,
+        #pdb.set_trace()
         d_points = points[:, [2, 1]] * coeff[:, None] # [N, 2] float
         d_points /= (self.p_res * self.p_spacing)
         d_points *= 2 # NOTE: some points may fall outside [-1, 1]
         return d_points
+    
+    def calculate_projection_distance(self ,  points , angle ):
+        d1 = self.DSO
+        d2 = self.DSD 
+
+        points = deepcopy(points).astype(float)
+        points[:, :2] -= 0.5 # [-0.5, 0.5]
+        points[:, 2] = 0.5 - points[:, 2] # [-0.5, 0.5]
+        points *= self.v_res * self.v_spacing # mm
+
+        angle = -1 * angle # inverse direction
+        rot_M = np.array([
+            [np.cos(angle), -np.sin(angle), 0],
+            [np.sin(angle),  np.cos(angle), 0],
+            [            0,              0, 1]
+        ])
+        rotated_points = points @ rot_M.T  
+        source_to_point = d1 - rotated_points[:, 0]  # 源点到物体点的距离
+        distances = np.abs(d2 - source_to_point)  # 点到探测器平面的距离        return coeff 
+        distances_ratio = distances / d2
+     
+        #pdb.set_trace() 
+        return distances_ratio

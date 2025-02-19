@@ -160,7 +160,31 @@ class Pelivc_LatentDiffusionDataset(Dataset):
         points_proj = np.stack(points_proj , axis=0)
         return points_proj
     
+    def get_view_feature(self , angles , points):
+        view_feature = []
+        #pdb.set_trace()
+        for a in angles:
+            #pdb.set_trace()
+            distance_ratio = self.low_res_geo.calculate_projection_distance(points , a)
+            view_feature.append(distance_ratio)
+            #pdb.set_trace()
+        view_feature = np.stack(view_feature , axis=0)
+        #pdb.set_trace()
+        view_feature = np.expand_dims(view_feature , axis=-1)
+        #pdb.set_trace()
+        angles_feature = angles / np.pi
+        angles_feature = np.expand_dims(angles_feature , axis=-1)
+        angles_feature = np.repeat(angles_feature , view_feature.shape[1] , axis=-1)
+        angles_feature = np.expand_dims(angles_feature , axis=-1)
+        #pdb.set_trace()
+        #add angels feature to view feature 
+        view_feature = np.concatenate([view_feature , angles_feature] , axis=-1).astype(np.float32)
+        #pdb.set_trace()
+        return view_feature 
+
+    
     def __getitem__(self, index):
+        #pdb.set_trace()
         name = self.files_names[index]
         #pdb.set_trace()
         gt_idensity = self.load_ct(name)  # scale to [0,1]
@@ -182,18 +206,22 @@ class Pelivc_LatentDiffusionDataset(Dataset):
             proj_points   = self.project_points(self.low_res_points , angles)
             projs = torch.from_numpy(projs).to(torch.float32)
             proj_points = torch.from_numpy(proj_points).to(torch.float32)
-
+            
+            view_feature = self.get_view_feature(angles , self.low_res_points)
+            #pdb.set_trace()
             points = deepcopy(self.low_res_points)
             points[:, :2] -= 0.5  
             points[:, 2]  = 0.5 - points[:,2]
             points *= 2 
+
 
             ret_dict = {
                 'filename': name,
                 'image': gt_idensity,
                 'xray' : projs,
                 'proj_points': proj_points,
-                'coords': points
+                'coords': points,
+                'view_feature' : view_feature
             }
         return ret_dict
     
@@ -235,7 +263,7 @@ def get_pelvic_loader(config , train_mode = 'autoencoder'):
                               pin_memory=config.get("pin_memory", False))
     test_loader = DataLoader( test_ds, 
                               batch_size=1,
-                              shuffle=True,
+                              shuffle=False,
                               num_workers=config.get("num_workers", 0),
                               pin_memory=config.get("pin_memory", False))
     

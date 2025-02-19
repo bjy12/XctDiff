@@ -16,12 +16,12 @@ model:
     cond_stage_trainable: true
     scale_factor: 0.8
     monitor: 'val/loss_simple_ema'
-    ckpt_path: "F:/Code_Space/x2ct_ldm/logs/stage_2_1_3_4/latent_8_4096_mlp/checkpoints/last.ckpt"
+    #ckpt_path: "F:/Code_Space/x2ct_ldm/logs/stage_2_1_3_4/latent_8_4096_mlp/checkpoints/last.ckpt"
     unet_config:
       target: ldm.modules.diffusionmodules.unet3dV2.Unet3D
       params:
-        dim: 256
-        channels: 264
+        dim: 128
+        channels: 136
         out_dim: 8
         has_self_cond: False
         init_kernel_size: 1
@@ -49,7 +49,7 @@ model:
           target: torch.nn.Identity
 
     cond_stage_config:
-      target: ldm.models.xrayconditionV2.XrayCondition
+      target: ldm.models.xrayconditionView_Agg.XrayCondition
       params:
         Xrayencoder_config: 
           in_channels: 3
@@ -64,7 +64,8 @@ model:
           bilinear: False
           model_name: 'resnet101'
         latent_res: 32
-        combine: 'mlp'
+        combine: 'view_agg'
+        use_view_feature: True
         implict_fuc_config:
           pos_dim: 63
           local_f_dim: 256  
@@ -75,6 +76,22 @@ model:
           last_activation: 'relu'
           use_silu: False
           no_activation: False
+        aggregation_config:
+          in_view_channels: 2
+          in_points_channels: 128 
+          view_embedd_channels: 128
+          points_embedd_channels: 128
+          nc_inner: 32
+          num_groups: 2
+          scaling: False
+          eps: 1e-6
+          gating: True
+          g_type: 'max'
+          use_points_mlp: False
+          deep_set_feat:
+            pool: 'max'
+            fusion: 'concatenation'
+            use_num: False
 
         #ckpt_path: "embedding_32_8.ckpt"
 
