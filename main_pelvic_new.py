@@ -7,7 +7,8 @@ from omegaconf import OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 #from data.lidc_idri import get_loader
-from data.pelivic_ae import get_pelvic_loader
+#from data.pelivic_ae import get_pelvic_loader
+from data.pelivic_ae_multi_scale import get_pelvic_loader
 from ldm.util import instantiate_from_config
 from ldm.modules.loggers.logger import ImageLogger
 import shutil

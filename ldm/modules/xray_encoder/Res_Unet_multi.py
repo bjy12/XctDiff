@@ -183,9 +183,18 @@ class ResNetGLEncoder(nn.Module):
             nn.BatchNorm2d(gloabl_out_dim),
         )
 
-        self.outc = nn.Sequential(OutConv(64 ,self.n_classed) ,
+        self.level_3 = nn.Sequential(OutConv(64 ,self.n_classed) ,
+                                  nn.BatchNorm2d(self.n_classed) ,
+                                  nn.Tanh())          
+
+        self.level_2 = nn.Sequential(OutConv(64 ,self.n_classed) ,
+                                  nn.BatchNorm2d(self.n_classed) ,
+                                  nn.Tanh()) 
+
+        self.level_1 = nn.Sequential(OutConv(64 ,self.n_classed) ,
                                   nn.BatchNorm2d(self.n_classed) ,
                                   nn.Tanh())
+        
 
         # self.output_dim = output_dim
         # self.output_ch = self.latent_dim
@@ -221,7 +230,7 @@ class ResNetGLEncoder(nn.Module):
                 global_feature = self.global_transform(global_feature)
                 #pdb.set_trace()
                 break
-        pdb.set_trace()
+        #pdb.set_trace()
         
         # Decoder path with skip connections
         #local_feature = self.up3(local_feature, skip_connections['layer2'])
@@ -229,16 +238,18 @@ class ResNetGLEncoder(nn.Module):
         # 512 32 32  skips 256 64 64 
         
         multi_level_features = []
+        #pdb.set_trace()
+        level_3_feature = self.up2(local_feature, skip_connections['layer1'])  # 32
+        level_2_feature = self.up1(level_3_feature, skip_connections['initial']) # 64
+        level_2_feature_local = self.level_2(level_2_feature)
+        level_1_feature = self.last_up(level_2_feature) # 128
+        level_1_feature = self.level_1(level_1_feature) # 256
+        #pdb.set_trace()
+        multi_level_features.append(level_1_feature.float())
+        multi_level_features.append(level_2_feature_local.float())
+        multi_level_features.append(level_3_feature.float())
 
-        local_feature = self.up2(local_feature, skip_connections['layer1'])  # 32
-        #pdb.set_trace()
-        level_3_feature = self.up1(local_feature, skip_connections['initial']) # 64
-        #pdb.set_trace()
-        level_2_feature = self.last_up(level_3_feature) # 128
-        level_1_feature = self.outc(level_2_feature) # 256
-        #pdb.set_trace()
-
-        return level_1_feature.float() , global_feature.float()
+        return multi_level_features , global_feature.float()
 
 if __name__ == "__main__":
   

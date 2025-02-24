@@ -18,10 +18,11 @@ model:
     monitor: 'val/loss_simple_ema'
     #ckpt_path: "F:/Code_Space/x2ct_ldm/logs/stage_2_1_3_4/latent_8_4096_mlp/checkpoints/last.ckpt"
     unet_config:
-      target: ldm.modules.diffusionmodules.unet3dV2.Unet3D
+      target: ldm.modules.diffusionmodules.unet3d_multi_scale.Unet3D
       params:
         dim: 8
-        channels: 136
+        multi_level_cond_dim: 128
+        channels: 8
         out_dim: 8
         has_self_cond: False
         init_kernel_size: 1
@@ -49,7 +50,7 @@ model:
           target: torch.nn.Identity
 
     cond_stage_config:
-      target: ldm.models.xrayconditionView_Agg.XrayCondition
+      target: ldm.models.xrayconditionView_Agg_Multi_Scale.XrayCondition
       params:
         Xrayencoder_config: 
           in_channels: 3
@@ -97,10 +98,11 @@ model:
 
 
 data:
-  batch_size: 2
+  batch_size: 3
   root_data: F:/Data_Space/Pelvic1K/processed_128x128_s2.0_block_48
   train_files_name: ./files_name/train_pelvic_2d_256_2.0_3d_128_2.5.txt
   test_files_name: ./files_name/test_pelvic_2d_256_2.0_3d_128_2.5.txt
   num_workers: 1
   pin_memory: True
-  geo_config: ./geo_config/config_2d_256_s2.0_3d_128_s2.5_low_res.yaml
+  geo_config: ./geo_config/config_2d_256_s2.0_3d_128_s2.5.yaml
+  use_multi_scale: true

@@ -5,6 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from copy import deepcopy
 from data.geometry import Geometry
+from data.geometry_multi_scale import Multi_Scale_Geometry
 import SimpleITK as sitk
 import pickle
 import os
@@ -84,7 +85,7 @@ class LIDC_IDRI_Dataset(Dataset):
         }
 
 class Pelivc_LatentDiffusionDataset(Dataset):
-    def __init__(self , root_data ,file_names , path_dict , mode='autoencoder' , geo_config_path = None ):
+    def __init__(self , root_data ,file_names , path_dict , mode='autoencoder' , geo_config_path = None , use_multi_scale = False):
         super().__init__()
 
         self.files_names = file_names
@@ -96,18 +97,39 @@ class Pelivc_LatentDiffusionDataset(Dataset):
         #pdb.set_trace()
 
         self.mode = mode
+        
         if self.mode == 'ldm':
             with open(os.path.join(geo_config_path) , 'r') as f:
-                geo_config = yaml.safe_load(f)
-                self.low_res_geo = Geometry(geo_config['projector'])
-                self.low_res_points = self.create_low_res_space(geo_config['projector']['nVoxel'])
+                    geo_config = yaml.safe_load(f)
+                    self.geo_config = geo_config
+            #pdb.set_trace()
+            if use_multi_scale is False:
+                v_scale_factor = np.array([4])
+                p_scale_factor = np.array([1])
+            else:
+                v_scale_factor = np.array([4 , 8 , 16])
+                p_scale_factor = np.array([1 , 2 , 4 ])
+            self._geo = Multi_Scale_Geometry( self.geo_config['projector'] , v_scale_factor=v_scale_factor , p_scale_factor = p_scale_factor)
+            multi_scale_low_res = self._geo.get_multi_v_res()
+            self.low_res_points = self.create_multi_res_points(multi_scale_low_res) # self.low_res_points is a list  [0] level 1  [1] level 2 [2]  level 3
+
+
     def __len__(self):
         return len(self.files_names)
-    def create_low_res_space(self , low_res):
+    def create_multi_res_points(self, multi_scale_low_res):
+        # multi_scale_res is numpy array 
+        multi_scale_low_points = []
+        for i in range(len(multi_scale_low_res)):
+            low_res_points = self.create_low_res_points(multi_scale_low_res[i]) 
+            multi_scale_low_points.append(low_res_points)
+        
+        return multi_scale_low_points
+    def create_low_res_points(self , low_res):
+        resolution = np.array([low_res, low_res, low_res], dtype=np.int32)      
         x, y, z = np.meshgrid(
-            np.arange(low_res[0]),
-            np.arange(low_res[1]),
-            np.arange(low_res[2]),
+            np.arange(resolution[0]),
+            np.arange(resolution[1]),
+            np.arange(resolution[2]),
             indexing='ij'
         )
         #pdb.set_trace()
@@ -118,7 +140,7 @@ class Pelivc_LatentDiffusionDataset(Dataset):
         ], axis=1)
 
         # 归一化到 [0,1] 范围
-        coords = coords / (np.array(low_res) - 1)
+        coords = coords / (np.array(resolution) - 1)
         #pdb.set_trace()
         # 添加batch维度，转换为float32类型
         coords = coords.reshape(-1, 3).astype(np.float32)
@@ -151,7 +173,8 @@ class Pelivc_LatentDiffusionDataset(Dataset):
         # -- de-normalization
         #projs = projs * projs_max / 0.2
 
-        return projs, angles     
+        return projs, angles  
+       
     def project_points(self, points , angles):
         points_proj = []
         for a in angles:
@@ -159,13 +182,36 @@ class Pelivc_LatentDiffusionDataset(Dataset):
             points_proj.append(p)
         points_proj = np.stack(points_proj , axis=0)
         return points_proj
+    def project_multi_res_points(self , multi_res_points , angles):
+        #pdb.set_trace()
+        multi_scale_project_points = {}
+        for i in range(len(multi_res_points)):
+            points_proj = []
+            for a in angles:
+                p = self._geo.project_multi_scale_points(multi_res_points[i] , a , scale_level = i )
+                points_proj.append(p)
+            points_proj = np.stack(points_proj , axis=0)
+            #pdb.set_trace()
+            multi_scale_project_points[f'level_{i}'] = torch.from_numpy(points_proj).to(torch.float32)
+        #db.set_trace()
+        return multi_scale_project_points
+    def get_multi_scale_view_feature(self, angles , multi_res_points):
+        multi_scale_view_feature = {}
+        for i in range(len(multi_res_points)):
+            #pdb.set_trace()
+            view_feature = self.get_view_feature(angles , multi_res_points[i])
+            #pdb.set_trace()
+            multi_scale_view_feature[f'level_{i}'] = torch.from_numpy(view_feature).to(torch.float32)
+        
+        return multi_scale_view_feature
+
     
     def get_view_feature(self , angles , points):
         view_feature = []
         #pdb.set_trace()
         for a in angles:
             #pdb.set_trace()
-            distance_ratio = self.low_res_geo.calculate_projection_distance(points , a)
+            distance_ratio = self._geo.calculate_projection_distance(points , a)
             view_feature.append(distance_ratio)
             #pdb.set_trace()
         view_feature = np.stack(view_feature , axis=0)
@@ -202,24 +248,29 @@ class Pelivc_LatentDiffusionDataset(Dataset):
                     #'angles': angles,
                 }   
         else:
-            projs, angles = self.sample_projections(name)
-            proj_points   = self.project_points(self.low_res_points , angles)
-            projs = torch.from_numpy(projs).to(torch.float32)
-            proj_points = torch.from_numpy(proj_points).to(torch.float32)
-            
-            view_feature = self.get_view_feature(angles , self.low_res_points)
             #pdb.set_trace()
-            points = deepcopy(self.low_res_points)
-            points[:, :2] -= 0.5  
-            points[:, 2]  = 0.5 - points[:,2]
-            points *= 2 
+            projs, angles = self.sample_projections(name)
+            # proj_multi_scale_points is dict
+            # dict include multi level proj points level 0 - -1 layer   level 1 -2 layer  level 2 -3 layer   
+            proj_multi_scale_points   = self.project_multi_res_points(self.low_res_points, angles)
+            #pdb.set_trace()
+            projs = torch.from_numpy(projs).to(torch.float32)
+            #proj_points = torch.from_numpy(proj_points).to(torch.float32)
+            #pdb.set_trace()
+            view_feature = self.get_multi_scale_view_feature(angles , self.low_res_points)
+            #pdb.set_trace()
+            # points = deepcopy(self.low_res_points)
+            # points[:, :2] -= 0.5  
+            # points[:, 2]  = 0.5 - points[:,2]
+            # points *= 2 
+            points = 0.2
 
 
             ret_dict = {
                 'filename': name,
                 'image': gt_idensity,
                 'xray' : projs,
-                'proj_points': proj_points,
+                'proj_points': proj_multi_scale_points,
                 'coords': points,
                 'view_feature' : view_feature
             }
@@ -245,11 +296,11 @@ def get_pelvic_loader(config , train_mode = 'autoencoder'):
     if train_mode == 'autoencoder':
        geo_config_path = None
     else:
-        geo_config_path = config['geo_config']
+       geo_config_path = config['geo_config']
     train_ds = Pelivc_LatentDiffusionDataset(root_data = config['root_data'] , file_names=train_files_name , path_dict=PATH_DICT , mode=train_mode , 
-                                             geo_config_path=geo_config_path)
+                                             geo_config_path=geo_config_path , use_multi_scale=config['use_multi_scale'])
     test_ds = Pelivc_LatentDiffusionDataset(root_data=config['root_data'], file_names=test_files_name, path_dict=PATH_DICT, mode=train_mode , 
-                                            geo_config_path=geo_config_path)
+                                            geo_config_path=geo_config_path , use_multi_scale= config['use_multi_scale'])
     print("Dataset all training: number of data: {}".format(len(train_files_name)))
     print("Dataset all validation: number of data: {}".format(len(test_files_name)))
     
@@ -261,7 +312,7 @@ def get_pelvic_loader(config , train_mode = 'autoencoder'):
                               shuffle=True,
                               num_workers=config.get("num_workers", 0),
                               pin_memory=config.get("pin_memory", False))
-    test_loader = DataLoader( test_ds, 
+    test_loader  = DataLoader( test_ds, 
                               batch_size=1,
                               shuffle=False,
                               num_workers=config.get("num_workers", 0),

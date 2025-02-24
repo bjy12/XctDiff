@@ -798,15 +798,39 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError
 
         return fold, unfold, normalization, weighting
+    def convert_dict_tensors(self , input_dict):
+        """
+        递归地将字典中的所有张量转换为连续的float格式
+        
+        Args:
+            input_dict (dict): 包含张量的字典
+            
+        Returns:
+            dict: 转换后的字典
+        """
+        if not isinstance(input_dict, dict):
+            return input_dict
+            
+        output_dict = {}
+        
+        for key, value in input_dict.items():
+            if torch.is_tensor(value):
+                # 处理张量
+                output_dict[key] = value.to(memory_format=torch.contiguous_format).float()
+
+        return output_dict
     @torch.no_grad()
     def get_cond_input(self, batch):
         #pdb.set_trace()
         c_proj , c_proj_points , c_coords , c_view_feature= batch['xray'] , batch['proj_points'] , batch['coords'] , batch['view_feature']
         c_proj = c_proj.to(memory_format=torch.contiguous_format).float()
-        c_proj_points = c_proj_points.to(memory_format=torch.contiguous_format).float()
+        
+        c_proj_points = self.convert_dict_tensors(c_proj_points)
+        #c_proj_points = c_proj_points.to(memory_format=torch.contiguous_format).float()
         c_coords = c_coords.to(memory_format=torch.contiguous_format).float()
-        c_view_feature = c_view_feature.to(memory_format=torch.contiguous_format).float()
-
+        #c_view_feature = c_view_feature.to(memory_format=torch.contiguous_format).float()
+        c_view_feature = self.convert_dict_tensors(c_view_feature)
+        #pdb.set_trace()
         xc = {
             'proj': c_proj,
             'proj_points': c_proj_points,
@@ -824,7 +848,7 @@ class LatentDiffusion(DDPM):
         x = x.to(self.device)
         encoder_posterior = self.encode_first_stage(x)
         z = self.get_first_stage_encoding(encoder_posterior).detach()
-        
+        #pdb.set_trace()
         if self.model.conditioning_key is not None and not self.force_null_conditioning:
             if cond_key is None:
                 cond_key = self.cond_stage_key
@@ -849,8 +873,8 @@ class LatentDiffusion(DDPM):
                     c = self.get_learned_conditioning(xc.to(self.device))
             else:
                 c = xc
-            if bs is not None:
-                c = c[:bs]
+            # if bs is not None:
+            #     c = c[:bs]
 
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
@@ -912,7 +936,8 @@ class LatentDiffusion(DDPM):
         #pdb.set_trace()
         if isinstance(cond, dict):
             # hybrid case, cond is expected to be a dict
-            pass
+            #pdb.set_trace()
+            x_recon = self.model(x_noisy , t , multi_scale_cond = cond)
         else:
             if not isinstance(cond, list):
                 cond = [cond]
@@ -924,8 +949,8 @@ class LatentDiffusion(DDPM):
                 key = 'split'
             #key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
-        #pdb.set_trace()
-        x_recon = self.model(x_noisy, t, **cond)
+            pdb.set_trace()
+            x_recon = self.model(x_noisy, t, **cond)
 
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
@@ -1586,14 +1611,26 @@ class DiffusionWrapper(pl.LightningModule):
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm', 'hybrid-adm', 'crossattn-adm', 'split']
 
 
-    def forward(self, x, t, split: list = None,c_concat: list = None, c_crossattn: list = None, c_adm=None):
+    def forward(self, x, t, multi_scale_cond :dict = None ,  split: list = None,c_concat: list = None, c_crossattn: list = None, c_adm=None):
         #pdb.set_trace()
         
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
         elif self.conditioning_key == 'split':
             #pdb.set_trace()
-            out = self.diffusion_model(x, t, cond=split)
+            if multi_scale_cond is not None:
+                #pdb.set_trace()
+                # convert dict to list 
+                multi_scale_list = []
+                for i in range(len(multi_scale_cond)):
+                    level_key = f'level_{i}'
+                    multi_scale_list.append(multi_scale_cond[level_key])
+                #out = self.diffusion_model(x,t ,cond= multi_scale_cond)
+                #pdb.set_trace()
+                out = self.diffusion_model(x,t,multi_scale_features= multi_scale_list)
+            else:
+                out = self.diffusion_model(x, t, cond=split)
+
             
         elif self.conditioning_key == 'concat':
             #pdb.set_trace() 
