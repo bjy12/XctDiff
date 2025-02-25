@@ -98,21 +98,28 @@ class Pelivc_LatentDiffusionDataset(Dataset):
 
         self.mode = mode
         
-        if self.mode == 'ldm':
+        if self.mode == 'ldm' or self.mode == 'implict':
             with open(os.path.join(geo_config_path) , 'r') as f:
                     geo_config = yaml.safe_load(f)
                     self.geo_config = geo_config
             #pdb.set_trace()
-            if use_multi_scale is False:
-                v_scale_factor = np.array([4])
+            if self.mode == 'ldm':
+                if use_multi_scale is False:
+                    v_scale_factor = np.array([4])
+                    p_scale_factor = np.array([1])
+                else:
+                    v_scale_factor = np.array([4 , 8 , 16])
+                    p_scale_factor = np.array([1 , 2 , 4 ])
+                self._geo = Multi_Scale_Geometry( self.geo_config['projector'] , v_scale_factor=v_scale_factor , p_scale_factor = p_scale_factor)
+                multi_scale_low_res = self._geo.get_multi_v_res()
+                self.low_res_points = self.create_multi_res_points(multi_scale_low_res) # self.low_res_points is a list  [0] level 1  [1] level 2 [2]  level 3
+            if self.mode =='implict':
+                v_scale_factor = np.array([1])
                 p_scale_factor = np.array([1])
-            else:
-                v_scale_factor = np.array([4 , 8 , 16])
-                p_scale_factor = np.array([1 , 2 , 4 ])
+ 
             self._geo = Multi_Scale_Geometry( self.geo_config['projector'] , v_scale_factor=v_scale_factor , p_scale_factor = p_scale_factor)
             multi_scale_low_res = self._geo.get_multi_v_res()
             self.low_res_points = self.create_multi_res_points(multi_scale_low_res) # self.low_res_points is a list  [0] level 1  [1] level 2 [2]  level 3
-
 
     def __len__(self):
         return len(self.files_names)
@@ -240,13 +247,26 @@ class Pelivc_LatentDiffusionDataset(Dataset):
         gt_idensity = np.expand_dims(gt_idensity, axis=0)
         gt_idensity = torch.from_numpy(gt_idensity)
         #pdb.set_trace()
+
+
+        #pdb.set_trace()
         if self.mode == 'autoencoder':
             ret_dict = {
                     'filename': name,
                     'image': gt_idensity,
-                    #'projs': projs,
                     #'angles': angles,
                 }   
+        elif self.mode == 'implict':
+            points = deepcopy(self.low_res_points[0])
+            points[:, :2] -= 0.5  
+            points[:, 2]  = 0.5 - points[:,2]
+            points *= 2 
+            ret_dict = {
+                    'filename': name,
+                    'image': gt_idensity,
+                    'coord': points
+                    #'angles': angles,
+                }               
         else:
             #pdb.set_trace()
             projs, angles = self.sample_projections(name)

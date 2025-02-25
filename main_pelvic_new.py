@@ -62,14 +62,14 @@ def get_parser(**parser_kwargs):
     parser.add_argument(
         "--log_dir",
         type=str,
-        default="logs",
+        default="../logs/",
         help="directory to save logs and checkpoints"
     )
     # 添加实验名称参数
     parser.add_argument(
         "--exp_name",
         type=str,
-        default=None,
+        default='demo',
         help="experiment name"
     )
 
@@ -101,6 +101,7 @@ if __name__ == '__main__':
     #pdb.set_trace()
     cfg = OmegaConf.load(hparams.cfg_path)
     # 设置实验目录
+    #pdb.set_trace()
     experiment_dir = setup_logging_and_checkpoints(
         hparams.cfg_path, 
         hparams.log_dir,

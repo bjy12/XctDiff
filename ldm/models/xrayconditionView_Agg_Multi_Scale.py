@@ -9,6 +9,7 @@ from ldm.util import instantiate_from_config
 from ldm.modules.ema import LitEma
 #from ldm.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from ldm.modules.xray_encoder.Res_Unet_multi import ResNetGLEncoder
+from ldm.modules.xray_encoder.unet import UNet
 from ldm.modules.xray_encoder.implict_function import get_embedder , Implict_Fuc_Network
 from ldm.modules.embedding.modules import Encoder, Decoder
 from ldm.modules.view_fusion.view_agg_points import ViewPoints_Aggregation
@@ -42,6 +43,7 @@ class XrayCondition(pl.LightningModule):
                  implict_fuc_config,
                  aggregation_config,
                  latent_res,
+                 xray_encoder,
                  ckpt_path=None,
                  image_key='xray',
                  points_key='proj_points',
@@ -61,7 +63,11 @@ class XrayCondition(pl.LightningModule):
         self.scale_level = level_dict
         if self.scale_level is not None:
             multi_scale_levels = True
-        self.image_feature_extractor = ResNetGLEncoder(**Xrayencoder_config)
+        pdb.set_trace()
+        if xray_encoder == 'res_unet':
+             self.image_feature_extractor = ResNetGLEncoder(**Xrayencoder_config)
+        elif xray_encoder == 'vanilla':
+             self.image_feature_extractor = UNet(**Xrayencoder_config)
         self.combine = combine
         self.use_view_feature = use_view_feature
         self.view_mixer = MLP([2, 2 // 2, 1])

@@ -286,3 +286,67 @@ class Decoder(nn.Module):
         h = nonlinearity(h)
         h = self.conv_out(h)
         return h
+    
+class Decoder_ForImplict(nn.Module):
+    def __init__(self, *, in_channels, out_channels, ch, resolution,
+                 attn_resolutions, ch_mult=(1,2,4,8), num_blocks=2,
+                 z_channels=256, block_type='ResnetBlock',
+                 attn_type="vanilla", dropout=0, resamp_with_conv=True, num_groups=32):
+        super().__init__()
+        assert block_type in ['ResnetBlock', 'ConvnetBlock', None], 'block_type only in ResnetBlock, ConvnetBlock and None'
+        if block_type == None: block_type = 'ResnetBlock'
+
+        self.num_resolutions = len(ch_mult)
+        self.num_blocks = num_blocks
+
+        conv_block = ResnetBlock if block_type == 'ResnetBlock' else ConvnetBlock
+
+        block_in = ch * ch_mult[self.num_resolutions - 1]
+        curr_res = resolution // 2 ** (self.num_resolutions - 1)
+
+        self.conv_in = torch.nn.Conv3d(z_channels, block_in, 3, 1, 1)
+
+        # middle
+        self.mid_norm = Normalize(block_in, normal_type='GN', num_groups=num_groups)
+        self.mid_block = torch.nn.Conv3d(block_in, block_in, 3, 1, 1)
+
+        # upsampling
+        self.up = nn.ModuleList()
+        for i_level in reversed(range(self.num_resolutions)):
+            block = nn.ModuleList()
+            attn = nn.ModuleList()
+            block_out = ch * ch_mult[i_level]
+            for i_block in range(self.num_blocks + 1):
+                block.append(conv_block(in_channels=block_in, out_channels=block_out, num_groups=num_groups, dropout=dropout))
+                block_in = block_out
+                if curr_res in attn_resolutions:
+                    attn.append(make_attn(block_in, attn_type=attn_type, num_groups=num_groups))
+            up = nn.Module()
+            up.block = block
+            up.attn = attn
+            if i_level != 0:
+                up.upsample = Upsample(block_in, resamp_with_conv)
+                curr_res = curr_res * 2
+            self.up.insert(0, up)  # prepend to get consistent order
+
+        # end
+        # self.norm_out = Normalize(block_in, normal_type='GN', num_groups=num_groups)
+        # self.conv_out = torch.nn.Conv3d(block_in, out_channels, 3, 1, 1)
+
+    def forward(self, z):
+        # z to block_in
+        h = self.conv_in(z)
+        # middle
+        h = self.mid_norm(h)
+        h = nonlinearity(h)
+        h = self.mid_block(h)
+        # upsampling
+        pdb.set_trace()
+        for i_level in reversed(range(self.num_resolutions)):
+            for i_block in range(self.num_blocks+1):
+                h = self.up[i_level].block[i_block](h)
+                if len(self.up[i_level].attn) > 0:
+                    h = self.up[i_level].attn[i_block](h)
+
+        # end
+        return h
