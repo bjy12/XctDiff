@@ -63,7 +63,7 @@ class XrayCondition(pl.LightningModule):
         self.scale_level = level_dict
         if self.scale_level is not None:
             multi_scale_levels = True
-        pdb.set_trace()
+        #pdb.set_trace()
         if xray_encoder == 'res_unet':
              self.image_feature_extractor = ResNetGLEncoder(**Xrayencoder_config)
         elif xray_encoder == 'vanilla':

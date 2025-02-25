@@ -1627,7 +1627,7 @@ class DiffusionWrapper(pl.LightningModule):
                     multi_scale_list.append(multi_scale_cond[level_key])
                 #out = self.diffusion_model(x,t ,cond= multi_scale_cond)
                 #pdb.set_trace()
-                out = self.diffusion_model(x,t,multi_scale_features= multi_scale_list)
+                out = self.diffusion_model(x,t, multi_scale_features= multi_scale_list)
             else:
                 out = self.diffusion_model(x, t, cond=split)
 
