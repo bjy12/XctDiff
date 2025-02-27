@@ -257,14 +257,14 @@ class Pelivc_LatentDiffusionDataset(Dataset):
                     #'angles': angles,
                 }   
         elif self.mode == 'implict':
-            points = deepcopy(self.low_res_points[0])
-            points[:, :2] -= 0.5  
-            points[:, 2]  = 0.5 - points[:,2]
-            points *= 2 
+            # points = deepcopy(self.low_res_points[0])
+            # points[:, :2] -= 0.5  
+            # points[:, 2]  = 0.5 - points[:,2]
+            # points *= 2 
             ret_dict = {
                     'filename': name,
                     'image': gt_idensity,
-                    'coord': points
+                    #'coord': points
                     #'angles': angles,
                 }               
         else:

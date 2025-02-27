@@ -10,25 +10,33 @@ model:
       params: {}
 
     ddconfig:
-      in_channels: 1
-      out_channels: 1
-      ch: 32
+      double_z: False
+      z_channels: 12
       resolution: 128
+      in_channels: 1
+      out_ch: 1
+      ch: 32
+      ch_mult: [ 1, 2, 4 ]  # num_down = len(ch_mult)-1
+      num_res_blocks: 2
       attn_resolutions: [8]
-      ch_mult: [1,2,4]    # num_down = len(ch_mult)-1
-      num_blocks: 2
-      z_channels: 8
-      block_type: "ResnetBlock"    # ResnetBlock, ConvnetBlock
-      attn_type: "vanilla"    # to be continued
       dropout: 0.0
-      resamp_with_conv: true
-      num_groups: 8
-    double_z: True
+      num_groups: 8 
+
+
 
     liifconfig:
-      hidden_list: [256, 256, 256, 256]
+      hidden_list: [192, 192, 192, 192]
       cell_decode: True
       local_ensemble: True
+    trainconfig:
+      bsize: 0
+      return_img: False
+      sample_q: 4096
+    
+    valconfig:
+      return_img: True
+      output_size: 128
+
 
 data:
   batch_size: 1

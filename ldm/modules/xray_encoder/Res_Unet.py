@@ -221,7 +221,7 @@ class ResNetGLEncoder(nn.Module):
                 global_feature = self.global_transform(global_feature)
                 #pdb.set_trace()
                 break
-        pdb.set_trace()
+        #pdb.set_trace()
         
         # Decoder path with skip connections
         #local_feature = self.up3(local_feature, skip_connections['layer2'])

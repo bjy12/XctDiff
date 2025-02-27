@@ -17,6 +17,7 @@ from einops import repeat
 
 from ldm.util import instantiate_from_config
 
+import pdb
 
 def make_beta_schedule(schedule, n_timestep, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
     if schedule == "linear":
@@ -266,7 +267,69 @@ def noise_like(shape, device, repeat=False):
     noise = lambda: torch.randn(shape, device=device)
     return repeat_noise() if repeat else noise()
 
-
+def make_coord_3d(shape, ranges=None, flatten=True, align_corners=False):
+    """ Make coordinates at grid centers for 3D volumes.
+    
+    Args:
+        shape: Tuple of 3 integers (depth, height, width)
+        ranges: Ranges for each dimension, default is [-1, 1]
+        flatten: Whether to flatten the coordinates
+        align_corners: Whether to align coordinates with corners
+        
+    Returns:
+        Tensor containing coordinates for each voxel
+    """
+    coord_seqs = []
+    for i, n in enumerate(shape):
+        if ranges is None:
+            v0, v1 = -1, 1
+        else:
+            v0, v1 = ranges[i]
+        r = (v1 - v0) / (2 * n)
+        
+        if align_corners:
+            seq = v0 + (2 * r) * torch.arange(n+1).float()
+        else:
+            seq = v0 + r + (2 * r) * torch.arange(n).float()
+        coord_seqs.append(seq)
+    
+    # Create 3D meshgrid (d, h, w, 3)
+    d_coords, h_coords, w_coords = torch.meshgrid(*coord_seqs, indexing='ij')
+    ret = torch.stack([d_coords, h_coords, w_coords], dim=-1)
+    
+    if flatten:
+        ret = ret.view(-1, ret.shape[-1])
+    return ret    
+def make_coord_cell_3d(bs, d, h, w):
+    """
+    Creates 3D coordinates and cell sizes for CT volumes.
+    
+    Args:
+        bs: Batch size
+        d: Depth of the volume
+        h: Height of the volume
+        w: Width of the volume
+        
+    Returns:
+        coord: Coordinates for each voxel [bs, d*h*w, 3]
+        cell: Cell size for each voxel [bs, d*h*w, 3]
+    """
+    # Generate coordinates for each voxel
+    coord = make_coord_3d((d, h, w)).cuda()
+    # pdb.set_trace()
+    # Create cell sizes (normalized voxel dimensions)
+    cell = torch.ones_like(coord)
+    cell[:, 0] *= 2 / d  # z-dimension
+    cell[:, 1] *= 2 / h  # y-dimension
+    cell[:, 2] *= 2 / w  # x-dimension
+    
+    # Repeat for batch size
+    # pdb.set_trace()
+    coord = coord.repeat((bs,) + (1,1,) * (coord.dim() - 1))
+    cell = cell.repeat((bs,) + (1,1,) * (cell.dim() - 1))
+    #coord = coord.repeat(bs,1,1)
+    #cell = cell.repeat(bs,1,1)
+    return coord, cell
 def make_coord(shape, ranges=None, flatten=True, align_corners=False):
     """ Make coordinates at grid centers.
     """
@@ -306,3 +369,11 @@ def to_pixel_samples(img):
     coord, cell = make_coord_cell(b, h, w)
     rgb = img.view(3, -1).permute(1, 0)
     return coord, cell, rgb
+
+def to_pixel_samples_3d(img):
+    b , _ , h , w , d = img.shape
+    coord , cell = make_coord_cell_3d(b,h , w ,d)
+    # pdb.set_trace()
+    identisy = img.reshape(b,1,h*w*d).permute(0,2,1)
+
+    return coord , cell , identisy

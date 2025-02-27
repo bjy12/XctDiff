@@ -357,12 +357,23 @@ class DDPM(pl.LightningModule):
         channels = self.channels
         return self.p_sample_loop((batch_size, channels, image_size, image_size),
                                   return_intermediates=return_intermediates)
-
-    def q_sample(self, x_start, t, noise=None):
+    #* old q_sample 
+    # def q_sample(self, x_start, t, noise=None , return_mean_std=False):
+    #     noise = default(noise, lambda: torch.randn_like(x_start))
+    #     mean = extract_into_tensor()
+    #     return (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+    #             extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+    
+    #* new q_sample for fine tune multi modality
+    def q_sample(self, x_start, t, noise=None, return_mean_std=False):
         noise = default(noise, lambda: torch.randn_like(x_start))
-        return (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
-                extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
-
+        mean = extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape)
+        std = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+        if return_mean_std:
+            return (mean * x_start + std * noise), mean, std
+        else:
+            return (mean * x_start + std * noise)
+        
     def get_v(self, x, noise, t):
         return (
                 extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) * noise -
@@ -890,7 +901,7 @@ class LatentDiffusion(DDPM):
         #pdb.set_trace()
         out = [z, c]
         if return_first_stage_outputs:
-            xrec = self.decode_first_stage(z)
+            xrec = self.decode_first_stage(z ,requires_grad=False)
             out.extend([x, xrec])
         if return_x:
             out.extend([x])
@@ -900,8 +911,7 @@ class LatentDiffusion(DDPM):
         # 0 
         return out
 
-    @torch.no_grad()
-    def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False):
+    def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False , output_size=None , requires_grad=False):
         if predict_cids:
             if z.dim() == 4:
                 z = torch.argmax(z.exp(), dim=1).long()
@@ -909,8 +919,12 @@ class LatentDiffusion(DDPM):
             z = rearrange(z, 'b h w c -> b c h w').contiguous()
 
         z = 1. / self.scale_factor * z
-        return self.first_stage_model.decode(z)
-
+        if requires_grad:
+            return self.first_stage_model.decode(z)
+        else:
+            with torch.no_grad():
+                return self.first_stage_model.decode(z)
+    
     @torch.no_grad()
     def encode_first_stage(self, x):
         return self.first_stage_model.encode(x)
@@ -949,7 +963,7 @@ class LatentDiffusion(DDPM):
                 key = 'split'
             #key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
-            pdb.set_trace()
+            #pdb.set_trace()
             x_recon = self.model(x_noisy, t, **cond)
 
         if isinstance(x_recon, tuple) and not return_ids:
@@ -1400,7 +1414,7 @@ class LatentDiffusion(DDPM):
                                                          ddim_steps=ddim_steps, eta=ddim_eta)
                 # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
                 # pdb.set_trace()
-                x_samples = self.decode_first_stage(samples)
+                x_samples = self.decode_first_stage(samples,requires_grad=False)
                 x = self.normalize_volume(x)
                 xrec = self.normalize_volume(xrec)
                 x_samples = self.normalize_volume(x_samples)

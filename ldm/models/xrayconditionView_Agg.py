@@ -117,29 +117,30 @@ class XrayCondition(pl.LightningModule):
 
         #pdb.set_trace()
         #* first version not use global feature 
-        proj_feats , global_feats  = self.image_feature_extractor(projs)
+        proj_feats , _  = self.image_feature_extractor(projs)
         #pdb.set_trace()
-        global_feats = global_feats.squeeze(-1).squeeze(-1)
-        global_feats = global_feats.unsqueeze(1) #  B' 1  C
-        view_global_feats = []
-        global_feats_ch = global_feats.shape[2]
-        for i in range(0,(b*m) , m):
-            #pdb.set_trace()
-            view_g = global_feats[i:i+m]
-            # 重塑并合并特征
-            view_g = view_g.reshape(1, 1, m * global_feats_ch)  # [1, 1, m*c]
-            #pdb.set_trace()
-            view_global_feats.append(view_g)
+        # global_feats = global_feats.squeeze(-1).squeeze(-1)
+        # global_feats = global_feats.unsqueeze(1) #  B' 1  C
+        # view_global_feats = []
+        # global_feats_ch = global_feats.shape[2]
+        # for i in range(0,(b*m) , m):
+        #     #pdb.set_trace()
+        #     view_g = global_feats[i:i+m]
+        #     # 重塑并合并特征
+        #     view_g = view_g.reshape(1, 1, m * global_feats_ch)  # [1, 1, m*c]
+        #     #pdb.set_trace()
+        #     view_global_feats.append(view_g)
 
-        #pdb.set_trace()
-        global_feats = torch.cat(view_global_feats, dim=0)
-        global_feats = global_feats.repeat(1,proj_points.shape[2],1)
+        # #pdb.set_trace()
+        # global_feats = torch.cat(view_global_feats, dim=0)
+        # global_feats = global_feats.repeat(1,proj_points.shape[2],1)
 
         proj_feats = list(proj_feats) if type(proj_feats) is tuple else [proj_feats]
         for i in range(len(proj_feats)):
             #pdb.set_trace()
             _, c_, w_, h_ = proj_feats[i].shape
             proj_feats[i] = proj_feats[i].reshape(b, m, c_, w_, h_).contiguous() # B, M, C, W, H
+        #pdb.set_trace()
         points_feats =  self.forward_points(proj_feats, proj_points)    
         #pdb.set_trace()
         if self.use_view_feature:

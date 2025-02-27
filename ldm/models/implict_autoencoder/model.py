@@ -9,7 +9,7 @@ from einops import rearrange
 from ldm.util import instantiate_from_config
 from ldm.modules.attention import LinearAttention
 from ldm.models.implict_autoencoder.mlp import MLP
-from ldm.models.implict_autoencoder.util import make_coord_cell, make_coord
+from ldm.models.implict_autoencoder.util import make_coord_cell, make_coord , make_coord_cell_3d ,make_coord_3d
 
 
 import pdb
@@ -784,10 +784,103 @@ class LIIF(nn.Module):
         self.cell_decode = cell_decode
         self.local_ensemble = local_ensemble
 
-        in_dim += 2 # attach coord
+        self.training = True
+
+        in_dim += 3 # attach coord
         if self.cell_decode:
-            in_dim += 2
+            in_dim += 3
         self.imnet = MLP(in_dim, out_dim, hidden_list)
+    def query_voxel(self, feat , coord , cell):
+        if self.local_ensemble:
+                # For 3D, we have 8 corners of a cube to ensemble
+                vx_lst = [-1, 1]
+                vy_lst = [-1, 1]
+                vz_lst = [-1, 1]
+                eps_shift = 1e-6
+        else:
+            vx_lst, vy_lst, vz_lst, eps_shift = [0], [0], [0], 0
+
+       # Compute step sizes for the feature grid
+        rz = 2 / feat.shape[-3] / 2  # depth dimension
+        ry = 2 / feat.shape[-2] / 2  # height dimension
+        rx = 2 / feat.shape[-1] / 2  # width dimension 
+
+        # Create feature grid coordinates
+        feat_coord = make_coord_3d(feat.shape[-3:], flatten=False).cuda() \
+            .permute(3, 0, 1, 2) \
+            .unsqueeze(0).expand(feat.shape[0], 3, *feat.shape[-3:])      
+          
+        preds = []
+        areas = []
+
+        for vz in vz_lst:
+            for vy in vy_lst:
+                for vx in vx_lst:
+                    # Create a copy of coordinates with slight offset
+                    coord_ = coord.clone()
+                    #pdb.set_trace()
+                    coord_[:, :, 0] += vz * rz + eps_shift  # z
+                    coord_[:, :, 1] += vy * ry + eps_shift  # y
+                    coord_[:, :, 2] += vx * rx + eps_shift  # x
+                    coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
+
+                    q_coord = coord_.flip(-1).unsqueeze(1).unsqueeze(1)  # [bs, 1, 1, n, 3]
+
+                   # Sample features (this will need 3D grid sampling)
+                    q_feat = F.grid_sample(
+                        feat, q_coord,
+                        mode='nearest', align_corners=False
+                    ).squeeze(2).squeeze(2).permute(0, 2, 1)  # [bs, n, c]
+                    
+                    # Sample actual coordinates from feature grid
+                    q_coord_on_grid = F.grid_sample(
+                        feat_coord, q_coord,
+                        mode='nearest', align_corners=False
+                    ).squeeze(2).squeeze(2).permute(0, 2, 1)  # [bs, n, 3]
+                    
+                    # Calculate relative coordinates in the feature grid
+                    rel_coord = coord - q_coord_on_grid
+
+                 # Calculate relative coordinates in the feature grid
+                    rel_coord = coord - q_coord_on_grid
+                    
+                    # Scale relative coordinates by feature dimensions
+                    rel_coord[:, :, 0] *= feat.shape[-3]  # Scale z
+                    rel_coord[:, :, 1] *= feat.shape[-2]  # Scale y
+                    rel_coord[:, :, 2] *= feat.shape[-1]  # Scale x
+                    
+                    # Concatenate features and coordinates
+                    inp = torch.cat([q_feat, rel_coord], dim=-1)
+                    
+                    # Add cell information if needed
+                    if self.cell_decode and cell is not None:
+                        rel_cell = cell.clone()
+                        rel_cell[:, :, 0] *= feat.shape[-3]
+                        rel_cell[:, :, 1] *= feat.shape[-2]
+                        rel_cell[:, :, 2] *= feat.shape[-1]
+                        inp = torch.cat([inp, rel_cell], dim=-1)
+                    
+                    # Predict values using the MLP
+                    bs, q = coord.shape[:2]
+                    pred = self.imnet(inp.view(bs * q, -1)).view(bs, q, -1)
+                    preds.append(pred)
+                    
+                    # Calculate weight as volume of the cuboid
+                    area = torch.abs(
+                        rel_coord[:, :, 0] * rel_coord[:, :, 1] * rel_coord[:, :, 2]
+                    )
+                    areas.append(area + 1e-9)     
+        # Weight predictions by relative volumes
+        tot_area = torch.stack(areas).sum(dim=0)
+        
+        # Apply weights and sum predictions
+        ret = 0
+        for pred, area in zip(preds, areas):
+            ret = ret + pred * (area / tot_area).unsqueeze(-1)
+            
+        return ret                                   
+
+
     
     def query_rgb(self, feat, coord, cell):
         if self.local_ensemble:
@@ -854,35 +947,38 @@ class LIIF(nn.Module):
             preds = []
             while ql < n:
                 qr = min(ql + bsize, n)
-                pred = self.query_rgb(feat, coord[:, ql: qr, :], cell[:, ql: qr, :])
+                #pred = self.query_rgb(feat, coord[:, ql: qr, :], cell[:, ql: qr, :])
+                pred = self.query_voxel(feat , coord[:, ql: qr, :] , cell[:, ql: qr, :])
                 preds.append(pred)
                 ql = qr
             pred = torch.cat(preds, dim=1)
         return pred
 
     def forward(self, feat, coord=None, cell=None, output_size=None, return_img=True, bsize=65536):
-        pdb.set
+        #pdb.set_trace()
         if return_img:
             assert output_size is not None
 
         if self.training:
             bsize = 0
-            
+        #pdb.set_trace()
         if coord is None:
             assert output_size is not None
-            coord, cell = make_coord_cell(feat.shape[0], output_size, output_size)
+            #coord, cell = make_coord_cell(feat.shape[0], output_size, output_size)
+            coord , cell = make_coord_cell_3d(feat.shape[0] , output_size , output_size , output_size)
         if cell is None:
             assert output_size is not None
             cell = torch.ones_like(coord)
             cell[:, 0] *= 2 / output_size
             cell[:, 1] *= 2 / output_size
-
+        #pdb.set_trace()
         if bsize > 0:
             out = self.batched_predict(feat, coord, cell, bsize)
         else:
-            out = self.query_rgb(feat, coord, cell)
-
+            #out = self.query_rgb(feat, coord, cell)
+            out = self.query_voxel(feat , coord , cell)
+        #pdb.set_trace()
         if return_img:
-            out = rearrange(out, 'b (h w) c -> b c h w', h=output_size, w=output_size)
+            out = rearrange(out, 'b (h w d ) c -> b c h w d ', h=output_size, w=output_size , d=output_size)
 
         return out

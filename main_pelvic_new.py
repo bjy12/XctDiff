@@ -7,8 +7,8 @@ from omegaconf import OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 #from data.lidc_idri import get_loader
-#from data.pelivic_ae import get_pelvic_loader
-from data.pelivic_ae_multi_scale import get_pelvic_loader
+from data.pelivic_ae import get_pelvic_loader as one_scale_loader
+from data.pelivic_ae_multi_scale import get_pelvic_loader as multi_scale_loader 
 from ldm.util import instantiate_from_config
 from ldm.modules.loggers.logger import ImageLogger
 import shutil
@@ -112,8 +112,11 @@ if __name__ == '__main__':
 
 
     # loading datasets
-    loader = get_pelvic_loader(cfg.data , hparams.train_mode)
-
+    if cfg.data['use_multi_scale']:
+        loader = multi_scale_loader(cfg.data , hparams.train_mode)
+    else:
+        loader = one_scale_loader(cfg.data , hparams.train_mode)
+    #pdb.set_trace()
     # loading model from cfg
     model = instantiate_from_config(cfg.model)
 
@@ -127,7 +130,7 @@ if __name__ == '__main__':
     epoch_ckpt = ModelCheckpoint(
         dirpath=os.path.join(experiment_dir, 'checkpoints'),
         filename='last_epoch',
-        every_n_epochs=10,
+        every_n_epochs=50,
         save_top_k=1,
         save_last=True,
     )
@@ -159,5 +162,6 @@ if __name__ == '__main__':
         default_root_dir=experiment_dir
     )
 
-    trainer.fit(model, loader[0], loader[1])
+    #trainer.fit(model, loader[0], loader[1])
 
+    trainer.fit(model, loader[0], val_dataloaders=loader[1])
